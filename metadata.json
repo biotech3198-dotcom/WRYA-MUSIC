@@ -1,0 +1,6 @@
+{
+  "name": "WRYA MUSIC",
+  "description": "Android Music Player with Android Auto, offline caching, and syncing from MusicKordi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
