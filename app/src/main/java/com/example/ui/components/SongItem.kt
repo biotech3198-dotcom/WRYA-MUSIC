@@ -67,6 +67,7 @@ fun SongItem(
     onFavoriteClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val formatted = com.example.util.SongMetadataFormatter.format(song)
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -149,7 +150,7 @@ fun SongItem(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = "${song.title} (#$rank)",
+                        text = "${formatted.title} (#$rank)",
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
                             color = if (isCurrentSong) ElectricCyan else TextPrimary,
@@ -182,7 +183,7 @@ fun SongItem(
                 Spacer(modifier = Modifier.height(2.dp))
 
                 Text(
-                    text = song.artist,
+                    text = formatted.artist,
                     style = MaterialTheme.typography.bodyMedium.copy(
                         color = TextSecondary,
                         fontSize = 13.sp

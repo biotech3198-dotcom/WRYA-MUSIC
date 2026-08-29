@@ -22,6 +22,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
@@ -159,28 +161,11 @@ fun MainScreen(viewModel: MainViewModel) {
     val showSourceManager by viewModel.showSourceManager.collectAsStateWithLifecycle()
     val playbackState by viewModel.playbackState.collectAsStateWithLifecycle()
     val diagnosticsState by viewModel.diagnosticsState.collectAsStateWithLifecycle()
-    val backupState by viewModel.backupState.collectAsStateWithLifecycle()
-
     val selectedLanguage by viewModel.selectedLanguage.collectAsStateWithLifecycle()
-
-    val exportFileLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json")
-    ) { uri ->
-        if (uri != null) {
-            viewModel.exportBackupToUri(uri)
-        }
-    }
-
-    val importFileLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.importBackupFromUri(uri)
-        }
-    }
 
     var showFullPlayer by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showAutoDiagnosticsDialog by remember { mutableStateOf(false) }
     var crashLogContent by remember { mutableStateOf<String?>(null) }
     val clipboardManager = LocalClipboardManager.current
 
@@ -216,11 +201,14 @@ fun MainScreen(viewModel: MainViewModel) {
         }
     }
 
-    Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DarkBackground),
-        topBar = {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val playButtonSize = maxWidth * (1f / 6f)
+
+        Scaffold(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(DarkBackground),
+            topBar = {
             TopAppBar(
                 title = {
                     Row(
@@ -289,16 +277,16 @@ fun MainScreen(viewModel: MainViewModel) {
 
                     Spacer(modifier = Modifier.width(2.dp))
 
-                    // Backup & Restore Button
+                    // Android Auto Diagnostics & Telemetry Button
                     IconButton(
-                        onClick = { viewModel.showBackupDialog(true) },
-                        modifier = Modifier.size(36.dp).testTag("backup_button")
+                        onClick = { showAutoDiagnosticsDialog = true },
+                        modifier = Modifier.size(36.dp).testTag("auto_diagnostics_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Save,
-                            contentDescription = "Backup & Restore Playlist",
+                            imageVector = Icons.Default.DirectionsCar,
+                            contentDescription = "Android Auto Diagnostics",
                             tint = ElectricCyan,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                     }
 
@@ -332,41 +320,62 @@ fun MainScreen(viewModel: MainViewModel) {
         floatingActionButton = {
             val songToPlay = playbackState.currentSong ?: songs.firstOrNull()?.song
             if (songToPlay != null) {
-                val triangleShape = androidx.compose.foundation.shape.GenericShape { size, _ ->
-                    // Right-pointing play triangle shape
-                    moveTo(size.width * 0.15f, size.height * 0.08f)
-                    lineTo(size.width * 0.92f, size.height * 0.5f)
-                    lineTo(size.width * 0.15f, size.height * 0.92f)
-                    close()
-                }
-
-                androidx.compose.material3.FloatingActionButton(
+                Surface(
                     onClick = {
-                        if (playbackState.currentSong == null) {
-                            viewModel.playSong(songToPlay, songs.map { it.song })
+                        try {
+                            if (playbackState.currentSong == null) {
+                                viewModel.playSong(songToPlay, songs.map { it.song })
+                            } else {
+                                viewModel.togglePlayPause()
+                            }
+                            showFullPlayer = true
+                        } catch (e: Exception) {
+                            android.util.Log.e("MainActivity", "Error handling play click: ${e.message}", e)
                         }
-                        showFullPlayer = true
                     },
-                    containerColor = ElectricCyan,
-                    contentColor = Color(0xFF003549),
-                    shape = triangleShape,
                     modifier = Modifier
-                        .size(64.dp)
-                        .padding(bottom = 8.dp)
-                        .testTag("floating_play_triangle_button")
+                        .size(playButtonSize)
+                        .padding(bottom = 6.dp)
+                        .testTag("floating_play_square_button"),
+                    shape = RoundedCornerShape(16.dp),
+                    color = ElectricCyan.copy(alpha = 0.22f),
+                    border = BorderStroke(1.5.dp, ElectricCyan.copy(alpha = 0.70f)),
+                    shadowElevation = 10.dp
                 ) {
                     Box(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(
+                                        ElectricCyan.copy(alpha = 0.35f),
+                                        Color(0xFF0284C7).copy(alpha = 0.20f)
+                                    )
+                                )
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = "Open Player",
-                            tint = Color(0xFF003549),
-                            modifier = Modifier
-                                .size(32.dp)
-                                .padding(end = 2.dp)
-                        )
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        ) {
+                            // Play triangle
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Play",
+                                tint = if (playbackState.isPlaying) TextSecondary else ElectricCyan,
+                                modifier = Modifier.size(playButtonSize * 0.44f)
+                            )
+                            Spacer(modifier = Modifier.width(1.dp))
+                            // Pause double bar
+                            Icon(
+                                imageVector = Icons.Default.Pause,
+                                contentDescription = "Pause",
+                                tint = if (playbackState.isPlaying) ElectricCyan else TextSecondary,
+                                modifier = Modifier.size(playButtonSize * 0.40f)
+                            )
+                        }
                     }
                 }
             }
@@ -447,50 +456,55 @@ fun MainScreen(viewModel: MainViewModel) {
                 )
             )
 
-            // Filter Chips Row
-            val filterOptions = listOf("All", "Newest", "Upbeat", "Calm", "Favorites", "Oldest")
+            // Filter Chips Row (All in 1 Row without horizontal scroll)
+            val filterOptions = listOf("All", "Favorite", "Calm", "New", "Old", "Upbeat")
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 filterOptions.forEach { filter ->
                     val isSelected = selectedFilter == filter ||
+                            (selectedFilter == "Favorites" && filter == "Favorite") ||
+                            (selectedFilter == "Newest" && filter == "New") ||
+                            (selectedFilter == "Oldest" && filter == "Old") ||
                             (selectedFilter == "همه" && filter == "All") ||
-                            (selectedFilter == "جدیدترین" && filter == "Newest") ||
+                            (selectedFilter == "جدیدترین" && filter == "New") ||
                             (selectedFilter == "شاد" && filter == "Upbeat") ||
                             (selectedFilter == "غمگین" && filter == "Calm") ||
-                            (selectedFilter == "علاقه‌مندی‌ها" && filter == "Favorites") ||
-                            (selectedFilter == "قدیمی‌ترین" && filter == "Oldest")
-                    FilterChip(
-                        selected = isSelected,
-                        onClick = { viewModel.setFilter(filter) },
-                        label = {
+                            (selectedFilter == "علاقه‌مندی‌ها" && filter == "Favorite") ||
+                            (selectedFilter == "قدیمی‌ترین" && filter == "Old")
+
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { viewModel.setFilter(filter) }
+                            .testTag("filter_chip_$filter"),
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) ElectricCyan else DarkSurface,
+                        border = BorderStroke(
+                            1.dp,
+                            if (isSelected) ElectricCyan else Color(0xFF1E283D)
+                        )
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Text(
                                 text = filter,
                                 style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    fontSize = 13.sp
-                                )
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                                    fontSize = 11.sp,
+                                    color = if (isSelected) Color(0xFF003549) else TextSecondary
+                                ),
+                                maxLines = 1
                             )
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = FilterChipDefaults.filterChipColors(
-                            containerColor = DarkSurface,
-                            labelColor = TextSecondary,
-                            selectedContainerColor = ElectricCyan,
-                            selectedLabelColor = Color(0xFF003549)
-                        ),
-                        border = FilterChipDefaults.filterChipBorder(
-                            enabled = true,
-                            selected = isSelected,
-                            borderColor = Color(0xFF1E283D),
-                            selectedBorderColor = ElectricCyan
-                        ),
-                        modifier = Modifier.testTag("filter_chip_$filter")
-                    )
+                        }
+                    }
                 }
             }
 
@@ -504,11 +518,11 @@ fun MainScreen(viewModel: MainViewModel) {
             ) {
                 Text(
                     text = when (selectedFilter) {
-                        "Favorites", "علاقه‌مندی‌ها" -> "Favorite Tracks (${songs.size})"
+                        "Favorite", "Favorites", "علاقه‌مندی‌ها" -> "Favorite Tracks (${songs.size})"
                         "Upbeat", "شاد" -> "Upbeat & Energetic (${songs.size})"
                         "Calm", "غمگین" -> "Calm & Relaxing (${songs.size})"
-                        "Newest", "جدیدترین" -> "Latest Releases (${songs.size})"
-                        "Oldest", "قدیمی‌ترین" -> "Classic Library (${songs.size})"
+                        "New", "Newest", "جدیدترین" -> "Latest Releases (${songs.size})"
+                        "Old", "Oldest", "قدیمی‌ترین" -> "Classic Library (${songs.size})"
                         else -> "Library Tracks (${songs.size})"
                     },
                     style = MaterialTheme.typography.titleMedium.copy(
@@ -612,9 +626,11 @@ fun MainScreen(viewModel: MainViewModel) {
     }
 
     // Modal Full Player Sheet
-    if (showFullPlayer && playbackState.currentSong != null) {
+    val activeSong = playbackState.currentSong ?: songs.firstOrNull()?.song
+    if (showFullPlayer && activeSong != null) {
+        val effectiveState = if (playbackState.currentSong != null) playbackState else playbackState.copy(currentSong = activeSong)
         FullPlayerSheet(
-            state = playbackState,
+            state = effectiveState,
             onDismiss = { showFullPlayer = false },
             onTogglePlayPause = { viewModel.togglePlayPause() },
             onNext = { viewModel.skipToNext() },
@@ -623,7 +639,7 @@ fun MainScreen(viewModel: MainViewModel) {
             onToggleShuffle = { viewModel.toggleShuffle() },
             onCustomShuffle = { includeKordi, includeFarsi -> viewModel.applyCustomShuffle(includeKordi, includeFarsi) },
             onToggleRepeat = { viewModel.toggleRepeat() },
-            onToggleFavorite = { viewModel.toggleFavorite(playbackState.currentSong!!) },
+            onToggleFavorite = { viewModel.toggleFavorite(activeSong) },
             onPlayQueueIndex = { viewModel.playQueueItem(it) },
             onMoveQueueItem = { from, to -> viewModel.moveQueueItem(from, to) },
             onRemoveFromQueue = { viewModel.removeFromQueue(it) }
@@ -1016,216 +1032,6 @@ fun MainScreen(viewModel: MainViewModel) {
         )
     }
 
-    // Backup & Restore Dialog
-    if (backupState.showBackupDialog) {
-        AlertDialog(
-            onDismissRequest = { viewModel.showBackupDialog(false) },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Save,
-                    contentDescription = null,
-                    tint = ElectricCyan,
-                    modifier = Modifier.size(28.dp)
-                )
-            },
-            title = {
-                Text(
-                    text = "BACK UP & RESTORE SETTING",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    ),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // INDEXED SONGS centered
-                    Text(
-                        text = "INDEXED SONGS: ${songs.size}",
-                        style = MaterialTheme.typography.titleSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = ElectricCyan,
-                            fontSize = 14.sp
-                        ),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // Processing or Status Message
-                    if (backupState.isExporting || backupState.isImporting) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(DarkSurfaceVariant, RoundedCornerShape(8.dp))
-                                .padding(10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                color = ElectricCyan,
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = backupState.message ?: "Processing...",
-                                fontSize = 12.sp,
-                                color = ElectricCyan,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    } else if (backupState.message != null) {
-                        val isError = backupState.message!!.contains("Error") || backupState.message!!.contains("failed") || backupState.message!!.contains("empty")
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (isError) Color(0xFF441B1B) else Color(0xFF1B3D2B)
-                            ),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = if (isError) Icons.Default.Warning else Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    tint = if (isError) Color(0xFFFF6B6B) else Color(0xFF52B788),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = backupState.message!!,
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        color = if (isError) Color(0xFFFFB4AB) else Color(0xFFB7F399),
-                                        fontWeight = FontWeight.Medium
-                                    ),
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                    }
-
-                    // EXPORT Section
-                    Text(
-                        text = "EXPORT",
-                        style = MaterialTheme.typography.labelLarge.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary
-                        ),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                val dateStr = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
-                                exportFileLauncher.launch("WRYAMUSIC_Backup_${songs.size}_songs_$dateStr.json")
-                            },
-                            modifier = Modifier.weight(1f),
-                            enabled = !backupState.isExporting && !backupState.isImporting,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = DarkSurfaceVariant,
-                                contentColor = TextPrimary
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 10.dp)
-                        ) {
-                            Icon(imageVector = Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("SAVE TO PHONE", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
-                        }
-
-                        Button(
-                            onClick = {
-                                viewModel.exportBackup { shareIntent ->
-                                    context.startActivity(Intent.createChooser(shareIntent, "Share WRYA MUSIC Backup"))
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                            enabled = !backupState.isExporting && !backupState.isImporting,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = ElectricCyan,
-                                contentColor = Color(0xFF003549)
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 10.dp)
-                        ) {
-                            Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("SHARE", fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // IMPORT Section
-                    Text(
-                        text = "IMPORT",
-                        style = MaterialTheme.typography.labelLarge.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary
-                        ),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Button(
-                        onClick = {
-                            importFileLauncher.launch("*/*")
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !backupState.isExporting && !backupState.isImporting,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = DarkSurfaceVariant,
-                            contentColor = TextPrimary
-                        ),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FileUpload,
-                            contentDescription = null,
-                            tint = GoldenAmber,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            "SELECT AND IMPORT BACK UP",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { viewModel.showBackupDialog(false) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Close", color = ElectricCyan, textAlign = TextAlign.Center)
-                }
-            },
-            containerColor = DarkSurface,
-            shape = RoundedCornerShape(16.dp)
-        )
-    }
-
     if (showSourceManager) {
         com.example.ui.components.SourceManagerSheet(
             viewModel = viewModel,
@@ -1233,5 +1039,12 @@ fun MainScreen(viewModel: MainViewModel) {
             farsiSources = farsiSources,
             onDismiss = { viewModel.showSourceManager.value = false }
         )
+    }
+
+    if (showAutoDiagnosticsDialog) {
+        com.example.ui.components.AutoDiagnosticsDialog(
+            onDismiss = { showAutoDiagnosticsDialog = false }
+        )
+    }
     }
 }

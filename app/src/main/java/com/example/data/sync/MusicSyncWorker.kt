@@ -156,7 +156,8 @@ class MusicSyncWorker(
                         continue
                     }
 
-                    val postId = extractNumericPostId(article) ?: continue
+                    val rawPostId = extractNumericPostId(article) ?: continue
+                    val postId = 1_000_000_000L + rawPostId
 
                     val alreadyExists = songDao.exists(postId)
                     if (alreadyExists && isCompleted && !isFullRescan) {
@@ -345,7 +346,7 @@ class MusicSyncWorker(
             if (tagList.isEmpty()) tagList.add("کوردی")
 
             val tagsString = tagList.joinToString(", ")
-            val publishDate = 1700000000000L + postId * 1000L
+            val publishDate = 1700000000000L + (postId % 1_000_000_000L) * 1000L
 
             return SongEntity(
                 id = postId,

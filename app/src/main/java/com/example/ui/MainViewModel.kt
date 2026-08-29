@@ -206,8 +206,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             
             var list = when (filter) {
-                "Newest", "جدیدترین" -> rankedSongs
-                "Oldest", "قدیمی‌ترین" -> rankedSongs.reversed()
+                "New", "Newest", "جدیدترین" -> rankedSongs
+                "Old", "Oldest", "قدیمی‌ترین" -> rankedSongs.reversed()
                 "Upbeat", "شاد" -> rankedSongs.filter { it.song.tags.contains("شاد") || it.song.tags.lowercase().contains("upbeat") }
                 "Calm", "غمگین" -> rankedSongs.filter { it.song.tags.contains("غمگین") || it.song.tags.lowercase().contains("calm") }
                 "Favorites", "علاقه‌مندی‌ها" -> rankedSongs.filter { it.song.isFavorite }
@@ -238,6 +238,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         connectToMediaService()
         // If DB is empty, open source manager by default so the user can see it's ready.
         viewModelScope.launch(Dispatchers.IO) {
+            songDao.normalizeAllLanguages()
             val count = songDao.getSongCount("کوردی") + songDao.getSongCount("فارسی")
             if (count == 0) {
                 showSourceManager.value = true
@@ -292,12 +293,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val songId = mediaItem?.mediaId?.toLongOrNull()
                 val duration = if (controller.duration > 0) controller.duration else 0L
-                if (songId != null) {
-                    viewModelScope.launch(Dispatchers.IO) {
-                        val song = songDao.getSongById(songId)
+                viewModelScope.launch(Dispatchers.IO) {
+                    val song = if (songId != null) songDao.getSongById(songId) else null
+                    withContext(Dispatchers.Main) {
                         _playbackState.update {
                             it.copy(
-                                currentSong = song,
+                                currentSong = song ?: it.currentSong,
+                                isPlaying = controller.isPlaying,
                                 durationMs = duration
                             )
                         }
@@ -315,12 +317,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         })
 
         // Initial sync of controller state
-        _playbackState.update {
-            it.copy(
-                isPlaying = controller.isPlaying,
-                isShuffle = controller.shuffleModeEnabled,
-                repeatMode = controller.repeatMode
-            )
+        val initialSongId = controller.currentMediaItem?.mediaId?.toLongOrNull()
+        viewModelScope.launch(Dispatchers.IO) {
+            val initialSong = if (initialSongId != null) songDao.getSongById(initialSongId) else null
+            withContext(Dispatchers.Main) {
+                _playbackState.update {
+                    it.copy(
+                        currentSong = initialSong ?: it.currentSong,
+                        isPlaying = controller.isPlaying,
+                        isShuffle = controller.shuffleModeEnabled,
+                        repeatMode = controller.repeatMode,
+                        durationMs = if (controller.duration > 0) controller.duration else it.durationMs
+                    )
+                }
+                if (controller.isPlaying) {
+                    startProgressTracker()
+                }
+            }
         }
     }
 
@@ -418,13 +431,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun exportBackup(onShareReady: (Intent) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             val language = _selectedLanguage.value
+            val dbLang = when (language) {
+                "Persian", "فارسی" -> "فارسی"
+                else -> "کوردی"
+            }
             _backupState.update { it.copy(isExporting = true, message = "Preparing backup file...") }
             try {
-                val allSongs = songDao.getAllSongsFlow(language).first()
-                val lastPage = syncPrefs.getLastCompletedPage(language) // Fallback for whole language if needed
+                val allSongs = songDao.getAllSongsFlow(dbLang).first()
+                val lastPage = syncPrefs.getLastCompletedPage(dbLang) // Fallback for whole language if needed
                 
                 val sourceMap = mutableMapOf<String, String>()
-                val sources = if (language == "کوردی") kordiSources.value else farsiSources.value
+                val sources = if (dbLang == "کوردی") kordiSources.value else farsiSources.value
                 sources.forEach { sourceMap[it.sourceId] = it.url }
                 
                 if (allSongs.isEmpty()) {
@@ -444,76 +461,69 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun exportBackupToUri(uri: Uri) {
+    fun exportSourceToUri(source: SourceState, uri: Uri, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch(Dispatchers.IO) {
-            val language = _selectedLanguage.value
-            _backupState.update { it.copy(isExporting = true, message = "Saving backup file...") }
             try {
-                val allSongs = songDao.getAllSongsFlow(language).first()
-                val lastPage = syncPrefs.getLastCompletedPage(language)
-                
-                val sourceMap = mutableMapOf<String, String>()
-                val sources = if (language == "کوردی") kordiSources.value else farsiSources.value
-                sources.forEach { sourceMap[it.sourceId] = it.url }
-                
-                val json = SongBackupManager.exportToJson(allSongs, lastPage, sourceMap)
-                val success = SongBackupManager.writeToUri(getApplication(), uri, json)
-                _backupState.update {
-                    it.copy(
-                        isExporting = false,
-                        message = if (success) "Backup saved successfully (${allSongs.size} songs)." else "Failed to save file."
-                    )
+                val songs = songDao.getSongsBySource(source.sourceNumber)
+                val lastPage = syncPrefs.getLastCompletedPage(source.sourceId)
+                if (songs.isEmpty()) {
+                    val msg = "Source ${source.sourceNumber} has no songs to export"
+                    syncPrefs.setSyncState(source.sourceId, false, msg)
+                    withContext(Dispatchers.Main) { onResult(false, msg) }
+                    return@launch
                 }
+                val json = SongBackupManager.exportSourceToJson(songs, source.sourceNumber, lastPage, source.url)
+                val success = SongBackupManager.writeToUri(getApplication(), uri, json)
+                val msg = if (success) "source${source.sourceNumber}.json exported (${songs.size} songs)" else "Failed to export source ${source.sourceNumber}"
+                syncPrefs.setSyncState(source.sourceId, false, msg)
+                withContext(Dispatchers.Main) { onResult(success, msg) }
             } catch (e: Exception) {
-                Log.e(TAG, "Export to URI failed", e)
-                _backupState.update { it.copy(isExporting = false, message = "Error saving file: ${e.message}") }
+                Log.e(TAG, "Export source ${source.sourceNumber} failed", e)
+                val msg = "Export error: ${e.message}"
+                syncPrefs.setSyncState(source.sourceId, false, msg)
+                withContext(Dispatchers.Main) { onResult(false, msg) }
             }
         }
     }
 
-    fun importBackupFromUri(uri: Uri) {
+    fun importSourceFromUri(source: SourceState, uri: Uri, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch(Dispatchers.IO) {
-            val language = _selectedLanguage.value
-            _backupState.update { it.copy(isImporting = true, message = "Reading backup file...") }
             try {
+                syncPrefs.setSyncState(source.sourceId, false, "Reading source${source.sourceNumber}.json...")
                 val content = SongBackupManager.readFromUri(getApplication(), uri)
                 if (content.isNullOrBlank()) {
-                    _backupState.update { it.copy(isImporting = false, message = "Selected file is empty or could not be read.") }
+                    val msg = "Selected file is empty or invalid"
+                    syncPrefs.setSyncState(source.sourceId, false, msg)
+                    withContext(Dispatchers.Main) { onResult(false, msg) }
                     return@launch
                 }
-                val result = SongBackupManager.parseImportContent(content)
+                val result = SongBackupManager.parseSourceImportContent(content, source.sourceNumber)
                 if (!result.success || result.songs.isEmpty()) {
-                    _backupState.update { it.copy(isImporting = false, message = result.message) }
+                    val msg = result.message
+                    syncPrefs.setSyncState(source.sourceId, false, msg)
+                    withContext(Dispatchers.Main) { onResult(false, msg) }
                     return@launch
                 }
-                
-                // Set language on all imported songs to match current tab
-                val songsToImport = result.songs.map { it.copy(language = language) }
-                
-                _backupState.update { it.copy(message = "Importing ${songsToImport.size} songs into database...") }
-                songDao.upsertPreservingUserStateList(songsToImport)
-                
+
+                songDao.upsertPreservingUserStateList(result.songs)
+                songDao.normalizeAllLanguages()
+
                 result.sourceUrls.forEach { (sourceId, url) ->
-                    if (sourceId.contains(language)) {
-                        syncPrefs.setSourceUrl(sourceId, url)
-                    }
+                    syncPrefs.setSourceUrl(sourceId, url)
                 }
-                
+
                 if (result.lastCompletedPage > 0) {
-                    val currentLastPage = syncPrefs.getLastCompletedPage(language)
-                    if (result.lastCompletedPage > currentLastPage) {
-                        syncPrefs.setLastCompletedPage(language, result.lastCompletedPage)
-                    }
+                    syncPrefs.setLastCompletedPage(source.sourceId, result.lastCompletedPage)
                 }
-                _backupState.update {
-                    it.copy(
-                        isImporting = false,
-                        message = "Success: ${songsToImport.size} songs imported successfully."
-                    )
-                }
+
+                val msg = "Source is updated (${result.songs.size} songs)"
+                syncPrefs.setSyncState(source.sourceId, false, msg)
+                withContext(Dispatchers.Main) { onResult(true, msg) }
             } catch (e: Exception) {
-                Log.e(TAG, "Import from URI failed", e)
-                _backupState.update { it.copy(isImporting = false, message = "Import error: ${e.message}") }
+                Log.e(TAG, "Import source ${source.sourceNumber} failed", e)
+                val msg = "Import error: ${e.message}"
+                syncPrefs.setSyncState(source.sourceId, false, msg)
+                withContext(Dispatchers.Main) { onResult(false, msg) }
             }
         }
     }
@@ -525,47 +535,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playSong(song: SongEntity, playlist: List<SongEntity>) {
-        val controller = mediaController ?: return
+        val controller = mediaController
+        if (controller == null) {
+            connectToMediaService()
+            _playbackState.update { it.copy(currentSong = song, isPlaying = true) }
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
-            val context = getApplication<Application>()
-            val mediaItems = playlist.map { s ->
-                val uri = if (!s.downloadedUri.isNullOrEmpty()) {
-                    try {
-                        val parsed = Uri.parse(s.downloadedUri)
-                        val pfd = context.contentResolver.openFileDescriptor(parsed, "r")
-                        if (pfd != null) {
-                            pfd.close()
-                            parsed
-                        } else {
+            try {
+                val context = getApplication<Application>()
+                // Cap playlist window to prevent Android Binder TransactionTooLargeException
+                val targetIdx = playlist.indexOfFirst { it.id == song.id }
+                val safeTargetIdx = if (targetIdx >= 0) targetIdx else 0
+                val startIndex = (safeTargetIdx - 10).coerceAtLeast(0)
+                val endIndex = (startIndex + 40).coerceAtMost(playlist.size)
+                val windowedPlaylist = if (playlist.size > 40) playlist.subList(startIndex, endIndex) else playlist
+                val relativeTargetIndex = windowedPlaylist.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+
+                val mediaItems = windowedPlaylist.map { s ->
+                    val uri = if (!s.downloadedUri.isNullOrEmpty()) {
+                        try {
+                            val parsed = Uri.parse(s.downloadedUri)
+                            val pfd = context.contentResolver.openFileDescriptor(parsed, "r")
+                            if (pfd != null) {
+                                pfd.close()
+                                parsed
+                            } else {
+                                Uri.parse(com.example.util.UrlHelper.normalizeAudioUrl(s.streamUrl))
+                            }
+                        } catch (e: Exception) {
                             Uri.parse(com.example.util.UrlHelper.normalizeAudioUrl(s.streamUrl))
                         }
-                    } catch (e: Exception) {
+                    } else {
                         Uri.parse(com.example.util.UrlHelper.normalizeAudioUrl(s.streamUrl))
                     }
-                } else {
-                    Uri.parse(com.example.util.UrlHelper.normalizeAudioUrl(s.streamUrl))
+
+                    MediaItem.Builder()
+                        .setMediaId(s.id.toString())
+                        .setUri(uri)
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setTitle(s.title)
+                                .setArtist(s.artist)
+                                .setArtworkUri(s.coverUrl?.let { com.example.util.UrlHelper.normalizeAudioUrl(it).toUri() })
+                                .build()
+                        )
+                        .build()
                 }
 
-                MediaItem.Builder()
-                    .setMediaId(s.id.toString())
-                    .setUri(uri)
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setTitle(s.title)
-                            .setArtist(s.artist)
-                            .setArtworkUri(s.coverUrl?.let { com.example.util.UrlHelper.normalizeAudioUrl(it).toUri() })
-                            .build()
-                    )
-                    .build()
-            }
-
-            val targetIndex = playlist.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
-
-            withContext(Dispatchers.Main) {
-                controller.setMediaItems(mediaItems, targetIndex, 0L)
-                controller.prepare()
-                controller.play()
-                _playbackState.update { it.copy(currentSong = song, isPlaying = true, queue = playlist) }
+                withContext(Dispatchers.Main) {
+                    try {
+                        controller.setMediaItems(mediaItems, relativeTargetIndex, 0L)
+                        controller.prepare()
+                        controller.play()
+                        _playbackState.update { it.copy(currentSong = song, isPlaying = true, queue = windowedPlaylist) }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error starting playback in media controller: ${e.message}", e)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error preparing media items in playSong: ${e.message}", e)
             }
         }
     }
@@ -625,6 +654,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val controller = mediaController ?: return
         if (controller.hasNextMediaItem()) {
             controller.seekToNextMediaItem()
+            controller.prepare()
+            controller.play()
         }
     }
 
@@ -632,6 +663,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val controller = mediaController ?: return
         if (controller.hasPreviousMediaItem()) {
             controller.seekToPreviousMediaItem()
+            controller.prepare()
+            controller.play()
         }
     }
 

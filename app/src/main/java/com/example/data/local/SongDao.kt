@@ -73,30 +73,105 @@ interface SongDao {
         }
     }
 
+    @Query("""
+        UPDATE songs 
+        SET language = 'کوردی' 
+        WHERE language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd', 'کوردی ') 
+           OR language LIKE '%kurd%' 
+           OR language LIKE '%Kurd%'
+    """)
+    suspend fun normalizeKurdishLanguages()
+
+    @Query("""
+        UPDATE songs 
+        SET language = 'فارسی' 
+        WHERE language IN ('Persian', 'persian', 'Farsi', 'farsi', 'فارسی ') 
+           OR language LIKE '%persian%' 
+           OR language LIKE '%Persian%' 
+           OR language LIKE '%farsi%'
+    """)
+    suspend fun normalizePersianLanguages()
+
+    @Query("""
+        UPDATE songs 
+        SET sourceNumber = CASE 
+            WHEN streamUrl LIKE '%musickordi%' THEN 1 
+            WHEN streamUrl LIKE '%hawrami%' THEN 2 
+            WHEN streamUrl LIKE '%gitarmuzic%' THEN 3 
+            WHEN language = 'فارسی' THEN 3
+            ELSE sourceNumber 
+        END
+    """)
+    suspend fun normalizeSourceNumbers()
+
+    @Transaction
+    suspend fun normalizeAllLanguages() {
+        normalizeKurdishLanguages()
+        normalizePersianLanguages()
+        normalizeSourceNumbers()
+    }
+
     @Query("SELECT * FROM songs ORDER BY publishDate DESC")
     suspend fun getAllSongs(): List<SongEntity>
 
     @Query("SELECT * FROM songs WHERE language IN (:languages) ORDER BY publishDate DESC")
     suspend fun getSongsByLanguages(languages: List<String>): List<SongEntity>
 
-    @Query("SELECT * FROM songs WHERE language = :language ORDER BY publishDate DESC")
+    @Query("""
+        SELECT * FROM songs 
+        WHERE language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi'))
+        ORDER BY publishDate DESC
+    """)
     fun getAllSongsFlow(language: String): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE language = :language ORDER BY publishDate ASC")
+    @Query("""
+        SELECT * FROM songs 
+        WHERE language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi'))
+        ORDER BY publishDate ASC
+    """)
     fun getAllSongsFlowOldest(language: String): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE language = :language AND (isAvailable = 1 OR downloadedUri IS NOT NULL) ORDER BY publishDate DESC")
+    @Query("""
+        SELECT * FROM songs 
+        WHERE (language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi')))
+          AND (isAvailable = 1 OR downloadedUri IS NOT NULL) 
+        ORDER BY publishDate DESC
+    """)
     fun getPlayableSongsFlow(language: String): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE language = :language AND isFavorite = 1 ORDER BY publishDate DESC")
+    @Query("""
+        SELECT * FROM songs 
+        WHERE (language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi')))
+          AND isFavorite = 1 
+        ORDER BY publishDate DESC
+    """)
     fun getFavoriteSongsFlow(language: String): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE language = :language AND isAvailable = 1 AND tags LIKE '%' || :tag || '%' ORDER BY publishDate DESC")
+    @Query("""
+        SELECT * FROM songs 
+        WHERE (language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi')))
+          AND isAvailable = 1 
+          AND tags LIKE '%' || :tag || '%' 
+        ORDER BY publishDate DESC
+    """)
     fun getSongsByTagFlow(tag: String, language: String): Flow<List<SongEntity>>
 
     @Query("""
         SELECT * FROM songs 
-        WHERE language = :language AND (
+        WHERE (language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi')))
+          AND (
            title LIKE '%' || :query || '%' 
            OR artist LIKE '%' || :query || '%' 
            OR tags LIKE '%' || :query || '%' 
@@ -106,17 +181,83 @@ interface SongDao {
     fun searchSongsFlow(query: String, language: String): Flow<List<SongEntity>>
 
     // Android Auto specific queries (Filtered for availability and strictly capped to 100 items)
-    @Query("SELECT * FROM songs WHERE language = :language AND isAvailable = 1 ORDER BY publishDate DESC LIMIT :limit")
+    @Query("""
+        SELECT * FROM songs 
+        WHERE (language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi')))
+          AND isAvailable = 1 
+        ORDER BY publishDate DESC 
+        LIMIT :limit
+    """)
     suspend fun getLatestAvailable(language: String, limit: Int = 100): List<SongEntity>
 
-    @Query("SELECT * FROM songs WHERE language = :language AND isAvailable = 1 ORDER BY publishDate ASC LIMIT :limit")
+    @Query("SELECT * FROM songs WHERE (isAvailable = 1 OR downloadedUri IS NOT NULL) ORDER BY publishDate DESC LIMIT :limit")
+    suspend fun getAllLatestAvailable(limit: Int = 100): List<SongEntity>
+
+    @Query("""
+        SELECT * FROM songs 
+        WHERE (language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi')))
+          AND isAvailable = 1 
+        ORDER BY publishDate ASC 
+        LIMIT :limit
+    """)
     suspend fun getOldestAvailable(language: String, limit: Int = 100): List<SongEntity>
 
-    @Query("SELECT * FROM songs WHERE language = :language AND isAvailable = 1 AND tags LIKE '%' || :tag || '%' ORDER BY publishDate DESC LIMIT :limit")
+    @Query("""
+        SELECT * FROM songs 
+        WHERE (language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi')))
+          AND isAvailable = 1 
+          AND tags LIKE '%' || :tag || '%' 
+        ORDER BY publishDate DESC 
+        LIMIT :limit
+    """)
     suspend fun getAvailableByTag(tag: String, language: String, limit: Int = 100): List<SongEntity>
 
-    @Query("SELECT * FROM songs WHERE language = :language AND isFavorite = 1 AND (isAvailable = 1 OR downloadedUri IS NOT NULL) ORDER BY publishDate DESC LIMIT :limit")
+    @Query("SELECT * FROM songs WHERE (isAvailable = 1 OR downloadedUri IS NOT NULL) AND tags LIKE '%' || :tag || '%' ORDER BY publishDate DESC LIMIT :limit")
+    suspend fun getAllAvailableByTag(tag: String, limit: Int = 100): List<SongEntity>
+
+    @Query("""
+        SELECT * FROM songs 
+        WHERE (language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi')))
+          AND isFavorite = 1 
+          AND (isAvailable = 1 OR downloadedUri IS NOT NULL) 
+        ORDER BY publishDate DESC 
+        LIMIT :limit
+    """)
     suspend fun getFavoritesForCar(language: String, limit: Int = 100): List<SongEntity>
+
+    @Query("SELECT * FROM songs WHERE isFavorite = 1 AND (isAvailable = 1 OR downloadedUri IS NOT NULL) ORDER BY publishDate DESC LIMIT :limit")
+    suspend fun getAllFavoritesForCar(limit: Int = 100): List<SongEntity>
+
+    @Query("""
+        SELECT * FROM songs 
+        WHERE (language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi')))
+          AND (isAvailable = 1 OR downloadedUri IS NOT NULL) 
+        ORDER BY RANDOM() 
+        LIMIT :limit
+    """)
+    suspend fun getRandomAvailableByLanguage(language: String, limit: Int = 100): List<SongEntity>
+
+    @Query("""
+        SELECT * FROM songs 
+        WHERE (language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi')))
+          AND isFavorite = 1 
+          AND (isAvailable = 1 OR downloadedUri IS NOT NULL) 
+        ORDER BY RANDOM() 
+        LIMIT :limit
+    """)
+    suspend fun getRandomFavoritesByLanguage(language: String, limit: Int = 100): List<SongEntity>
 
     @Query("SELECT * FROM songs WHERE isAvailable = 1 OR downloadedUri IS NOT NULL ORDER BY RANDOM() LIMIT :limit")
     suspend fun getRandomAvailable(limit: Int = 100): List<SongEntity>
@@ -136,10 +277,26 @@ interface SongDao {
     @Query("UPDATE songs SET isAvailable = :isAvailable WHERE streamUrl = :streamUrl")
     suspend fun updateAvailabilityByStreamUrl(streamUrl: String, isAvailable: Boolean)
 
-    @Query("SELECT COUNT(*) FROM songs WHERE language = :language")
+    @Query("SELECT * FROM songs WHERE sourceNumber = :sourceNumber ORDER BY publishDate DESC")
+    suspend fun getSongsBySource(sourceNumber: Int): List<SongEntity>
+
+    @Query("SELECT COUNT(*) FROM songs")
+    suspend fun getTotalCount(): Int
+
+    @Query("""
+        SELECT COUNT(*) FROM songs 
+        WHERE language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi'))
+    """)
     suspend fun getSongCount(language: String): Int
 
-    @Query("SELECT COUNT(*) FROM songs WHERE language = :language")
+    @Query("""
+        SELECT COUNT(*) FROM songs 
+        WHERE language = :language 
+           OR (:language = 'کوردی' AND language IN ('Kurdish', 'kurdish', 'Kurd', 'kurd'))
+           OR (:language = 'فارسی' AND language IN ('Persian', 'persian', 'Farsi', 'farsi'))
+    """)
     fun getSongCountFlow(language: String): Flow<Int>
 
     @Query("SELECT COUNT(*) FROM songs WHERE sourceNumber = :sourceNumber")

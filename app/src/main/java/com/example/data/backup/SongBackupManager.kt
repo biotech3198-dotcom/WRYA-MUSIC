@@ -68,6 +68,133 @@ object SongBackupManager {
     }
 
     /**
+     * Exports songs for a single source into structured JSON format.
+     */
+    fun exportSourceToJson(
+        songs: List<SongEntity>,
+        sourceNumber: Int,
+        lastCompletedPage: Int,
+        sourceUrl: String
+    ): String {
+        val root = JSONObject()
+        val defaultLang = if (sourceNumber == 3) "فارسی" else "کوردی"
+        root.put("appName", "WRYA MUSIC")
+        root.put("version", BACKUP_VERSION)
+        root.put("sourceNumber", sourceNumber)
+        root.put("sourceUrl", sourceUrl)
+        root.put("language", defaultLang)
+        root.put("exportDate", System.currentTimeMillis())
+        root.put("exportDateReadable", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
+        root.put("lastCompletedPage", lastCompletedPage)
+        root.put("totalSongs", songs.size)
+
+        val array = JSONArray()
+        for (song in songs) {
+            val obj = JSONObject()
+            obj.put("id", song.id)
+            obj.put("title", song.title)
+            obj.put("artist", song.artist)
+            obj.put("streamUrl", song.streamUrl)
+            if (song.coverUrl != null) obj.put("coverUrl", song.coverUrl)
+            obj.put("publishDate", song.publishDate)
+            obj.put("tags", song.tags)
+            obj.put("isFavorite", song.isFavorite)
+            obj.put("language", defaultLang)
+            obj.put("sourceNumber", sourceNumber)
+            array.put(obj)
+        }
+        root.put("songs", array)
+
+        return root.toString(2)
+    }
+
+    /**
+     * Parses JSON content specifically imported for a target source.
+     */
+    fun parseSourceImportContent(content: String, targetSourceNumber: Int): ImportResult {
+        if (content.isBlank()) {
+            return ImportResult(false, emptyList(), 0, emptyMap(), "File is empty")
+        }
+
+        try {
+            val trimmed = content.trim()
+            val targetLang = if (targetSourceNumber == 3) "فارسی" else "کوردی"
+            var lastCompletedPage = 0
+            var sourceUrl = ""
+            val songsArray: JSONArray
+
+            if (trimmed.startsWith("{")) {
+                val root = JSONObject(trimmed)
+                lastCompletedPage = root.optInt("lastCompletedPage", 0)
+                sourceUrl = root.optString("sourceUrl", "")
+                songsArray = root.optJSONArray("songs") ?: JSONArray()
+            } else if (trimmed.startsWith("[")) {
+                songsArray = JSONArray(trimmed)
+            } else {
+                return parseImportContent(content)
+            }
+
+            val songsList = mutableListOf<SongEntity>()
+            for (i in 0 until songsArray.length()) {
+                val obj = songsArray.getJSONObject(i)
+                val rawId = obj.optLong("id", 0L)
+                val title = obj.optString("title", "").trim()
+                val artist = obj.optString("artist", "").trim()
+                val streamUrl = obj.optString("streamUrl", "").trim()
+                val coverUrl = if (obj.has("coverUrl")) obj.optString("coverUrl") else null
+                val publishDate = obj.optLong("publishDate", System.currentTimeMillis())
+                val tags = obj.optString("tags", "")
+                val isFavorite = obj.optBoolean("isFavorite", false)
+
+                val finalId = when {
+                    rawId > 0 && targetSourceNumber == 1 && rawId < 1_000_000_000L -> 1_000_000_000L + rawId
+                    rawId > 0 && targetSourceNumber == 2 && rawId < 2_000_000_000L -> 5_000_000_000L + rawId
+                    rawId > 0 && targetSourceNumber == 3 && rawId < 3_000_000_000L -> 7_000_000_000L + rawId
+                    rawId > 0 -> rawId
+                    targetSourceNumber == 1 -> 1_000_000_000L + (kotlin.math.abs(streamUrl.hashCode().toLong()) % 900_000_000L)
+                    targetSourceNumber == 2 -> 5_000_000_000L + (kotlin.math.abs(streamUrl.hashCode().toLong()) % 900_000_000L)
+                    else -> 7_000_000_000L + (kotlin.math.abs(streamUrl.hashCode().toLong()) % 900_000_000L)
+                }
+
+                if (streamUrl.isNotEmpty()) {
+                    songsList.add(
+                        SongEntity(
+                            id = finalId,
+                            title = if (title.isNotEmpty()) title else "Song $finalId",
+                            artist = if (artist.isNotEmpty()) artist else "Unknown Artist",
+                            coverUrl = coverUrl,
+                            streamUrl = streamUrl,
+                            publishDate = publishDate,
+                            tags = tags,
+                            isFavorite = isFavorite,
+                            isAvailable = true,
+                            language = targetLang,
+                            sourceNumber = targetSourceNumber
+                        )
+                    )
+                }
+            }
+
+            if (songsList.isEmpty()) {
+                return ImportResult(false, emptyList(), 0, emptyMap(), "No valid songs found in file")
+            }
+
+            val sourceUrlsMap = if (sourceUrl.isNotBlank()) mapOf("source_$targetSourceNumber" to sourceUrl) else emptyMap()
+
+            return ImportResult(
+                success = true,
+                songs = songsList,
+                lastCompletedPage = lastCompletedPage,
+                sourceUrls = sourceUrlsMap,
+                message = "Successfully loaded ${songsList.size} songs for Source $targetSourceNumber"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse source import content", e)
+            return ImportResult(false, emptyList(), 0, emptyMap(), "Error reading file: ${e.message}")
+        }
+    }
+
+    /**
      * Creates a shareable backup file in app's cache directory and returns a share Intent.
      */
     fun createShareIntent(context: Context, jsonContent: String, totalSongs: Int): Intent {
@@ -163,7 +290,7 @@ object SongBackupManager {
                 val songsList = mutableListOf<SongEntity>()
                 for (i in 0 until songsArray.length()) {
                     val obj = songsArray.getJSONObject(i)
-                    val id = obj.optLong("id", 0L)
+                    val rawId = obj.optLong("id", 0L)
                     val title = obj.optString("title", "").trim()
                     val artist = obj.optString("artist", "").trim()
                     val streamUrl = obj.optString("streamUrl", "").trim()
@@ -171,14 +298,35 @@ object SongBackupManager {
                     val publishDate = obj.optLong("publishDate", System.currentTimeMillis())
                     val tags = obj.optString("tags", "")
                     val isFavorite = obj.optBoolean("isFavorite", false)
-                    val language = obj.optString("language", "کوردی")
-                    val sourceNumber = obj.optInt("sourceNumber", if (language == "فارسی") 3 else 1)
+                    val rawLang = obj.optString("language", "کوردی")
+                    val normalizedLang = when (rawLang.trim()) {
+                        "Persian", "فارسی", "persian", "farsi" -> "فارسی"
+                        else -> "کوردی"
+                    }
+                    val detectedSource = when {
+                        obj.has("sourceNumber") -> obj.optInt("sourceNumber", if (normalizedLang == "فارسی") 3 else 1)
+                        streamUrl.contains("musickordi") -> 1
+                        streamUrl.contains("hawrami") -> 2
+                        streamUrl.contains("gitarmuzic") -> 3
+                        normalizedLang == "فارسی" -> 3
+                        else -> 1
+                    }
 
-                    if (id > 0 && streamUrl.isNotEmpty() && title.isNotEmpty()) {
+                    val finalId = when {
+                        rawId > 0 && detectedSource == 1 && rawId < 1_000_000_000L -> 1_000_000_000L + rawId
+                        rawId > 0 && detectedSource == 2 && rawId < 2_000_000_000L -> 5_000_000_000L + rawId
+                        rawId > 0 && detectedSource == 3 && rawId < 3_000_000_000L -> 7_000_000_000L + rawId
+                        rawId > 0 -> rawId
+                        detectedSource == 1 -> 1_000_000_000L + (kotlin.math.abs(streamUrl.hashCode().toLong()) % 900_000_000L)
+                        detectedSource == 2 -> 5_000_000_000L + (kotlin.math.abs(streamUrl.hashCode().toLong()) % 900_000_000L)
+                        else -> 7_000_000_000L + (kotlin.math.abs(streamUrl.hashCode().toLong()) % 900_000_000L)
+                    }
+
+                    if (streamUrl.isNotEmpty()) {
                         songsList.add(
                             SongEntity(
-                                id = id,
-                                title = title,
+                                id = finalId,
+                                title = if (title.isNotEmpty()) title else "Song $finalId",
                                 artist = if (artist.isNotEmpty()) artist else "Unknown Artist",
                                 coverUrl = coverUrl,
                                 streamUrl = streamUrl,
@@ -186,8 +334,8 @@ object SongBackupManager {
                                 tags = tags,
                                 isFavorite = isFavorite,
                                 isAvailable = true,
-                                language = language,
-                                sourceNumber = sourceNumber
+                                language = normalizedLang,
+                                sourceNumber = detectedSource
                             )
                         )
                     }
@@ -210,7 +358,7 @@ object SongBackupManager {
                 val songsList = mutableListOf<SongEntity>()
                 for (i in 0 until songsArray.length()) {
                     val obj = songsArray.getJSONObject(i)
-                    val id = obj.optLong("id", 0L)
+                    val rawId = obj.optLong("id", 0L)
                     val title = obj.optString("title", "").trim()
                     val artist = obj.optString("artist", "").trim()
                     val streamUrl = obj.optString("streamUrl", "").trim()
@@ -218,19 +366,44 @@ object SongBackupManager {
                     val publishDate = obj.optLong("publishDate", System.currentTimeMillis())
                     val tags = obj.optString("tags", "")
                     val isFavorite = obj.optBoolean("isFavorite", false)
+                    val rawLang = obj.optString("language", "کوردی")
+                    val normalizedLang = when (rawLang.trim()) {
+                        "Persian", "فارسی", "persian", "farsi" -> "فارسی"
+                        else -> "کوردی"
+                    }
+                    val detectedSource = when {
+                        obj.has("sourceNumber") -> obj.optInt("sourceNumber", if (normalizedLang == "فارسی") 3 else 1)
+                        streamUrl.contains("musickordi") -> 1
+                        streamUrl.contains("hawrami") -> 2
+                        streamUrl.contains("gitarmuzic") -> 3
+                        normalizedLang == "فارسی" -> 3
+                        else -> 1
+                    }
 
-                    if (id > 0 && streamUrl.isNotEmpty()) {
+                    val finalId = when {
+                        rawId > 0 && detectedSource == 1 && rawId < 1_000_000_000L -> 1_000_000_000L + rawId
+                        rawId > 0 && detectedSource == 2 && rawId < 2_000_000_000L -> 5_000_000_000L + rawId
+                        rawId > 0 && detectedSource == 3 && rawId < 3_000_000_000L -> 7_000_000_000L + rawId
+                        rawId > 0 -> rawId
+                        detectedSource == 1 -> 1_000_000_000L + (kotlin.math.abs(streamUrl.hashCode().toLong()) % 900_000_000L)
+                        detectedSource == 2 -> 5_000_000_000L + (kotlin.math.abs(streamUrl.hashCode().toLong()) % 900_000_000L)
+                        else -> 7_000_000_000L + (kotlin.math.abs(streamUrl.hashCode().toLong()) % 900_000_000L)
+                    }
+
+                    if (streamUrl.isNotEmpty()) {
                         songsList.add(
                             SongEntity(
-                                id = id,
-                                title = if (title.isNotEmpty()) title else "Song $id",
+                                id = finalId,
+                                title = if (title.isNotEmpty()) title else "Song $finalId",
                                 artist = if (artist.isNotEmpty()) artist else "Unknown Artist",
                                 coverUrl = coverUrl,
                                 streamUrl = streamUrl,
                                 publishDate = publishDate,
                                 tags = tags,
                                 isFavorite = isFavorite,
-                                isAvailable = true
+                                isAvailable = true,
+                                language = normalizedLang,
+                                sourceNumber = detectedSource
                             )
                         )
                     }

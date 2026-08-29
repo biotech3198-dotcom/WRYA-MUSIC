@@ -54,7 +54,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +69,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -78,6 +81,7 @@ import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import com.example.ui.PlaybackUiState
+import com.example.util.CarStatusMonitor
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -117,6 +121,18 @@ fun FullPlayerSheet(
 ) {
     val song = state.currentSong ?: return
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    val context = LocalContext.current.applicationContext
+    val statusMonitor = remember { CarStatusMonitor(context) }
+    val currentCarStatus by statusMonitor.combinedStatus.collectAsState()
+
+    DisposableEffect(statusMonitor) {
+        onDispose {
+            try {
+                statusMonitor.unregister()
+            } catch (_: Exception) {}
+        }
+    }
 
     var showShuffleDialog by remember { mutableStateOf(false) }
     var shuffleKordi by remember { mutableStateOf(true) }
@@ -405,9 +421,10 @@ fun FullPlayerSheet(
                                         Spacer(modifier = Modifier.width(10.dp))
 
                                         // Title & Artist
+                                        val formattedQueueSong = com.example.util.SongMetadataFormatter.format(queueSong)
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = queueSong.title,
+                                                text = formattedQueueSong.title,
                                                 style = MaterialTheme.typography.bodyMedium.copy(
                                                     fontWeight = if (isPlayingCurrent) FontWeight.Bold else FontWeight.SemiBold,
                                                     color = if (isPlayingCurrent) ElectricCyan else TextPrimary,
@@ -417,7 +434,7 @@ fun FullPlayerSheet(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Text(
-                                                text = queueSong.artist,
+                                                text = formattedQueueSong.artist,
                                                 style = MaterialTheme.typography.bodySmall.copy(
                                                     color = TextSecondary,
                                                     fontSize = 11.sp
@@ -481,17 +498,19 @@ fun FullPlayerSheet(
                 ) {
                     val rotation = remember { Animatable(0f) }
                     LaunchedEffect(state.isPlaying) {
-                        if (state.isPlaying) {
-                            rotation.animateTo(
-                                targetValue = rotation.value + 360f,
-                                animationSpec = infiniteRepeatable(
-                                    animation = tween(12000, easing = LinearEasing),
-                                    repeatMode = RepeatMode.Restart
+                        try {
+                            if (state.isPlaying) {
+                                rotation.animateTo(
+                                    targetValue = rotation.value + 360f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(12000, easing = LinearEasing),
+                                        repeatMode = RepeatMode.Restart
+                                    )
                                 )
-                            )
-                        } else {
-                            rotation.stop()
-                        }
+                            } else {
+                                rotation.stop()
+                            }
+                        } catch (_: Exception) {}
                     }
 
                     Box(
@@ -537,6 +556,7 @@ fun FullPlayerSheet(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     // Song Info (Title, Artist, Tags) and Favorite
+                    val formattedSong = com.example.util.SongMetadataFormatter.format(song)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -546,7 +566,7 @@ fun FullPlayerSheet(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = song.title,
+                                text = formattedSong.title,
                                 style = MaterialTheme.typography.headlineSmall.copy(
                                     fontWeight = FontWeight.Bold,
                                     color = TextPrimary,
@@ -558,7 +578,7 @@ fun FullPlayerSheet(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = song.artist,
+                                text = formattedSong.artist,
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     color = ElectricCyan,
                                     fontWeight = FontWeight.Medium,
@@ -575,6 +595,22 @@ fun FullPlayerSheet(
                                         fontSize = 11.sp
                                     ),
                                     textAlign = TextAlign.Center
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = DarkSurfaceVariant.copy(alpha = 0.8f),
+                                border = BorderStroke(1.dp, GlassBorder)
+                            ) {
+                                Text(
+                                    text = currentCarStatus,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = if (currentCarStatus.contains("⚠️") || currentCarStatus.contains("🚫") || currentCarStatus.contains("🪫")) GoldenAmber else ElectricCyan,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 11.sp
+                                    ),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
                                 )
                             }
                         }

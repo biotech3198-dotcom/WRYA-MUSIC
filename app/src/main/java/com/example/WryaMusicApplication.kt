@@ -24,6 +24,7 @@ class WryaMusicApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        com.example.util.AutoDiagnosticsLogger.init(this)
         setupCrashHandler()
         createNotificationChannels()
     }
